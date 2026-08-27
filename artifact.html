@@ -1,0 +1,741 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="light">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>明德國小意見即時收集與重點文字雲</title>
+
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            darkMode: 'class',
+            theme: {
+                extend: {
+                    colors: {
+                        brand: { 50: '#f0fdf4', 500: '#10b981', 600: '#059669', 700: '#047857' }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&family=Inter:wght@400;600;700&display=swap" rel="stylesheet">
+    
+    <!-- D3.js & d3-cloud Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3-cloud/1.2.5/d3.layout.cloud.min.js"></script>
+
+    <!-- Firebase 11 SDK Module for Cross-Device Real-Time Sync -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, collection, addDoc, getDocs, deleteDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Expose Firebase functions globally
+        window.initCloudSync = async function() {
+            const appId = typeof __app_id !== 'undefined' ? __app_id : 'minde-wordcloud-app';
+            let firebaseConfig = null;
+            if (typeof __firebase_config !== 'undefined' && __firebase_config) {
+                try {
+                    firebaseConfig = typeof __firebase_config === 'string' ? JSON.parse(__firebase_config) : __firebase_config;
+                } catch(e) { console.error("Firebase config error:", e); }
+            }
+
+            if (firebaseConfig) {
+                try {
+                    const app = initializeApp(firebaseConfig);
+                    window.auth = getAuth(app);
+                    window.db = getFirestore(app);
+
+                    if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                        await signInWithCustomToken(window.auth, __initial_auth_token);
+                    } else {
+                        await signInAnonymously(window.auth);
+                    }
+
+                    window.isCloudEnabled = true;
+                    window.cloudAppId = appId;
+                    window.cloudCollectionPath = ['artifacts', appId, 'public', 'data', 'submissions'];
+
+                    // Update UI status badge
+                    const syncBadge = document.getElementById('stat-sync-status');
+                    if (syncBadge) {
+                        syncBadge.className = "text-[11px] bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-xl font-semibold flex items-center gap-1.5 shadow-sm";
+                        syncBadge.innerHTML = `<i class="fa-solid fa-wifi text-emerald-500 animate-pulse"></i> 雲端即時連線中`;
+                    }
+
+                    window.listenToCloudSubmissions();
+                } catch (err) {
+                    console.warn("Firebase connect failed, running in local memory mode:", err);
+                }
+            }
+        };
+
+        window.listenToCloudSubmissions = function() {
+            if (!window.db || !window.auth?.currentUser) return;
+            const submissionsRef = collection(window.db, ...window.cloudCollectionPath);
+
+            onSnapshot(submissionsRef, (snapshot) => {
+                const cloudList = [];
+                snapshot.forEach(docSnap => {
+                    const data = docSnap.data();
+                    cloudList.push({
+                        id: docSnap.id,
+                        nickname: data.nickname || '小阿德01',
+                        opinion: data.opinion || '',
+                        tag: data.tag || '💬 聽眾意見',
+                        time: data.time || new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                        createdAt: data.createdAt || Date.now()
+                    });
+                });
+
+                // Sort newest first
+                cloudList.sort((a, b) => b.createdAt - a.createdAt);
+
+                const prevCount = window.submissions ? window.submissions.length : 0;
+                window.submissions = cloudList;
+                if (typeof window.updateSubmissionsUI === 'function') window.updateSubmissionsUI();
+
+                // Trigger AI analysis if new submissions arrive
+                if (cloudList.length > prevCount && window.isAutoAnalyzeEnabled && typeof window.scheduleAutoAnalysis === 'function') {
+                    window.scheduleAutoAnalysis();
+                }
+            }, (error) => {
+                console.error("Firestore onSnapshot error:", error);
+            });
+        };
+
+        window.addCloudSubmission = async function(entry) {
+            if (!window.isCloudEnabled || !window.db || !window.auth?.currentUser) return false;
+            try {
+                const submissionsRef = collection(window.db, ...window.cloudCollectionPath);
+                await addDoc(submissionsRef, entry);
+                return true;
+            } catch (err) {
+                console.error("Cloud submit failed:", err);
+                return false;
+            }
+        };
+
+        window.clearCloudSubmissions = async function() {
+            if (!window.isCloudEnabled || !window.db || !window.auth?.currentUser) return;
+            try {
+                const submissionsRef = collection(window.db, ...window.cloudCollectionPath);
+                const snapshot = await getDocs(submissionsRef);
+                const promises = snapshot.docs.map(d => deleteDoc(doc(window.db, ...window.cloudCollectionPath, d.id)));
+                await Promise.all(promises);
+            } catch (err) {
+                console.error("Clear cloud docs failed:", err);
+            }
+        };
+    </script>
+
+    <style>
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        .word-cloud-text {
+            cursor: pointer;
+            transition: all 0.2s ease;
+            user-select: none;
+        }
+        .word-cloud-text:hover {
+            opacity: 0.8;
+            transform: scale(1.05);
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col font-sans antialiased selection:bg-indigo-500 selection:text-white">
+
+    <!-- Header Navbar -->
+    <header class="border-b border-slate-200 bg-white/90 backdrop-blur sticky top-0 z-40 shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 to-purple-600 flex items-center justify-center text-white shadow-md shadow-indigo-200">
+                    <i class="fa-solid fa-graduation-cap text-lg"></i>
+                </div>
+                <div>
+                    <h1 class="font-bold text-base sm:text-lg leading-tight text-slate-900">
+                        明德國小意見即時收集與重點文字雲
+                    </h1>
+                    <p class="text-xs text-slate-500 hidden sm:block">AI 智慧提煉聽眾意見重點與即時視覺化大螢幕</p>
+                </div>
+            </div>
+
+            <!-- Mode Switching Buttons -->
+            <div class="flex items-center gap-1 bg-slate-100 p-1 rounded-xl border border-slate-200">
+                <button id="btn-mode-presenter" onclick="switchMode('presenter')" class="px-3 py-1.5 rounded-lg text-xs font-bold bg-white text-indigo-700 shadow-sm transition flex items-center gap-1.5">
+                    <i class="fa-solid fa-desktop"></i>
+                    <span>講師大螢幕</span>
+                </button>
+                <button id="btn-mode-audience" onclick="switchMode('audience')" class="px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 transition flex items-center gap-1.5">
+                    <i class="fa-solid fa-mobile-screen-button"></i>
+                    <span>聽眾發言頁</span>
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Area -->
+    <main class="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-6 flex flex-col gap-5">
+
+        <!-- ================= Presenter View (Desktop Only Focus) ================= -->
+        <div id="view-presenter" class="flex flex-col gap-5 flex-1">
+            
+            <!-- Top Status Bar & Presenter Action Bar -->
+            <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-wrap items-center justify-between gap-3">
+                <div class="flex items-center gap-3">
+                    <span class="text-sm font-bold text-slate-800 flex items-center gap-2">
+                        <i class="fa-solid fa-sparkles text-indigo-600"></i> AI 歸納與動態文字雲儀表板
+                    </span>
+                    <span id="stat-total-count" class="text-xs bg-indigo-50 text-indigo-700 font-semibold px-2.5 py-1 rounded-full border border-indigo-100">
+                        目前收到 0 則意見
+                    </span>
+                </div>
+
+                <!-- Action Controls -->
+                <div class="flex items-center gap-2 flex-wrap">
+                    <!-- Sync Status Badge -->
+                    <div id="stat-sync-status" class="text-[11px] bg-slate-100 text-slate-500 border border-slate-200 px-2.5 py-1 rounded-xl font-medium flex items-center gap-1.5">
+                        <i class="fa-solid fa-circle-dot text-slate-400"></i> 單機模式
+                    </div>
+
+                    <!-- Auto-Analyze Toggle -->
+                    <label class="cursor-pointer bg-slate-50 hover:bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-xl text-xs flex items-center gap-1.5 text-slate-700 transition" title="新意見送出時自動進行 AI 分析">
+                        <input type="checkbox" id="toggle-auto-analyze" checked onchange="toggleAutoAnalyze(this.checked)" class="w-3.5 h-3.5 rounded accent-indigo-600 cursor-pointer">
+                        <span class="font-medium text-[11px]"><i class="fa-solid fa-bolt text-amber-500"></i> 自動 AI 歸納</span>
+                    </label>
+
+                    <!-- QR Code Modal Trigger Button -->
+                    <button onclick="toggleQRModal(true)" class="px-3 py-1.5 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-xs font-semibold rounded-xl border border-indigo-200 transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-qrcode"></i> 聽眾掃描填寫
+                    </button>
+
+                    <!-- Clear Submissions -->
+                    <button onclick="clearAllSubmissions()" class="px-3 py-1.5 bg-slate-100 hover:bg-red-50 hover:text-red-600 text-slate-500 text-xs rounded-xl border border-slate-200 transition" title="清空所有資料">
+                        <i class="fa-solid fa-trash-can"></i>
+                    </button>
+
+                    <!-- Run AI Analysis Trigger -->
+                    <button id="run-ai-btn" onclick="triggerAIAnalysis()" class="px-3.5 py-1.5 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white font-bold text-xs rounded-xl shadow-sm active:scale-95 transition flex items-center gap-1.5">
+                        <i class="fa-solid fa-sparkles"></i> 觸發 AI 歸納與更新文字雲
+                    </button>
+                </div>
+            </div>
+
+            <!-- Presenter Main Grid -->
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-5 flex-1">
+                
+                <!-- Left 8 Columns: AI Word Cloud Display & Summary Card -->
+                <div class="lg:col-span-8 flex flex-col gap-5">
+                    
+                    <!-- Word Cloud Container Box -->
+                    <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col min-h-[420px] relative">
+                        <div class="flex items-center justify-between border-b border-slate-100 pb-3 mb-3">
+                            <span class="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
+                                <i class="fa-solid fa-cloud text-indigo-600"></i> 聽眾意見核心概念文字雲 (AI 自動提煉重點)
+                            </span>
+                            <span id="stat-last-sync" class="text-[11px] text-slate-400">尚未執行 AI 分析</span>
+                        </div>
+
+                        <!-- Canvas / SVG Container -->
+                        <div id="ai-cloud-container" class="w-full flex-1 min-h-[340px] bg-slate-50/70 rounded-xl border border-slate-100 relative flex items-center justify-center overflow-hidden">
+                            
+                            <!-- Empty State Indicator -->
+                            <div id="cloud-empty-state" class="flex flex-col items-center justify-center text-slate-400 gap-3 p-6 text-center">
+                                <div class="w-16 h-16 rounded-full bg-slate-100 flex items-center justify-center text-slate-300 text-2xl">
+                                    <i class="fa-solid fa-comments"></i>
+                                </div>
+                                <p class="text-xs text-slate-500 font-medium">尚未收到聽眾發言，或點擊上方「觸發 AI 歸納」生成重點文字雲</p>
+                            </div>
+
+                            <!-- Loading Spinner -->
+                            <div id="cloud-loading" class="hidden absolute inset-0 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center gap-3 z-20">
+                                <i class="fa-solid fa-circle-notch fa-spin text-3xl text-indigo-600"></i>
+                                <span class="text-xs text-indigo-700 font-bold" id="loading-text">AI 正在深度解析聽眾意見並提煉重點短詞...</span>
+                            </div>
+
+                            <!-- SVG Element Render Target -->
+                            <svg id="ai-cloud-svg" class="w-full h-full block" preserveAspectRatio="xMidYMid meet"></svg>
+                        </div>
+                    </div>
+
+                    <!-- AI Key Takeaways Summary Card -->
+                    <div class="bg-white border border-slate-200 rounded-2xl p-5 shadow-sm flex flex-col gap-3">
+                        <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+                            <span class="text-xs font-bold text-slate-800 flex items-center gap-2">
+                                <i class="fa-solid fa-brain-circuit text-purple-600"></i> Gemini AI 聽眾重點歸納與講評摘要
+                            </span>
+                            <span class="text-[10px] bg-purple-50 text-purple-700 px-2 py-0.5 rounded-md font-semibold">Gemini 3 Flash</span>
+                        </div>
+                        <div id="ai-summary-content" class="text-xs text-slate-600 leading-relaxed min-h-[50px] flex items-center">
+                            <p class="text-slate-400 italic">當聽眾送出意見時，AI 將在此處生成全體發言的重點摘要與情緒焦點趨勢...</p>
+                        </div>
+                    </div>
+
+                </div>
+
+                <!-- Right 4 Columns: Live Audience Feed Stream -->
+                <div class="lg:col-span-4 flex flex-col">
+                    <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col flex-1 h-full">
+                        <div class="flex items-center justify-between border-b border-slate-100 pb-3 mb-3">
+                            <span class="text-xs font-bold text-slate-800 flex items-center gap-2">
+                                <i class="fa-solid fa-list-ul text-indigo-600"></i> 即時發言動態流
+                            </span>
+                            <span class="text-[11px] text-slate-400">最新在上</span>
+                        </div>
+
+                        <div id="submissions-list" class="flex-1 overflow-y-auto max-h-[520px] space-y-3 pr-1">
+                            <!-- Empty Feed State -->
+                            <div class="text-center py-12 text-slate-400 text-xs">
+                                <i class="fa-solid fa-inbox text-3xl mb-2 text-slate-300 block"></i>
+                                尚未收到意見，聽眾可掃描 QR Code 開啟頁面填寫...
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+            </div>
+
+        </div>
+
+        <!-- ================= Audience View (Mobile Friendly Form) ================= -->
+        <div id="view-audience" class="hidden flex-1 flex flex-col items-center justify-center py-4">
+            <div class="bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 max-w-lg w-full shadow-lg flex flex-col gap-5">
+                
+                <div class="text-center border-b border-slate-100 pb-4">
+                    <div class="w-12 h-12 rounded-2xl bg-indigo-50 border border-indigo-100 text-indigo-600 flex items-center justify-center text-xl mx-auto mb-2">
+                        <i class="fa-solid fa-paper-plane"></i>
+                    </div>
+                    <h2 class="font-bold text-lg text-slate-900">明德國小意見即時收集</h2>
+                    <p class="text-xs text-slate-500 mt-1">請填寫您的看法，講師大螢幕將即時進行 AI 歸納與文字雲呈現！</p>
+                </div>
+
+                <!-- Audience Form -->
+                <form id="audience-form" onsubmit="handleAudienceSubmit(event)" class="flex flex-col gap-4">
+                    <!-- Nickname Input -->
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1.5">暱稱 (選填)</label>
+                        <input type="text" id="input-nickname" placeholder="小阿德01" value="小阿德01"
+                            class="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white transition">
+                    </div>
+
+                    <!-- Opinion Input -->
+                    <div>
+                        <label class="block text-xs font-bold text-slate-700 mb-1.5">意見回饋 <span class="text-red-500">*</span></label>
+                        <textarea id="input-opinion" rows="5" required
+                            class="w-full bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white transition resize-none"
+                            placeholder="請用一段話分享你的想法"></textarea>
+                    </div>
+
+                    <!-- Submit Button -->
+                    <button type="submit" class="w-full py-3.5 bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-500 hover:to-purple-500 text-white font-bold text-sm rounded-xl shadow-md shadow-indigo-200 active:scale-95 transition flex items-center justify-center gap-2">
+                        <i class="fa-solid fa-paper-plane"></i> 送出意見
+                    </button>
+                </form>
+
+                <!-- Success Alert Toast -->
+                <div id="audience-success-msg" class="hidden bg-emerald-50 border border-emerald-200 text-emerald-800 p-3 rounded-xl text-xs text-center flex items-center justify-center gap-2 shadow-sm">
+                    <i class="fa-solid fa-circle-check text-emerald-600 text-base"></i> 發言已成功送出！講師的大螢幕文字雲將即時同步。
+                </div>
+
+            </div>
+        </div>
+
+        <!-- Audience QR Code Modal for Presenter -->
+        <div id="qr-modal" class="hidden fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div class="bg-white rounded-3xl p-6 sm:p-8 max-w-sm w-full shadow-2xl flex flex-col items-center gap-4 text-center border border-slate-100">
+                <div class="flex items-center justify-between w-full border-b border-slate-100 pb-3">
+                    <span class="font-bold text-slate-800 text-base flex items-center gap-2">
+                        <i class="fa-solid fa-qrcode text-indigo-600"></i> 聽眾掃描發言 QR Code
+                    </span>
+                    <button onclick="toggleQRModal(false)" class="text-slate-400 hover:text-slate-600 p-1">
+                        <i class="fa-solid fa-xmark text-lg"></i>
+                    </button>
+                </div>
+                
+                <p class="text-xs text-slate-500">請聽眾拿起手機掃描下方二維碼進入意見填寫頁</p>
+                
+                <!-- Generated QR Code Image -->
+                <div class="bg-slate-50 p-4 rounded-2xl border border-slate-200 shadow-inner my-1">
+                    <img id="qr-code-img" class="w-48 h-48 block mx-auto rounded-xl" alt="QR Code" src="">
+                </div>
+
+                <p class="text-[11px] text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-xl border border-indigo-100 font-medium">
+                    <i class="fa-solid fa-bolt mr-1"></i>聽眾送出後，大螢幕將跨裝置即時分析！
+                </p>
+                
+                <button onclick="toggleQRModal(false)" class="w-full py-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition">
+                    關閉視窗
+                </button>
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        // --- State Management ---
+        let submissions = window.submissions || [];
+        let aiConceptResults = [];
+        let currentMode = 'presenter';
+
+        // Auto-analyze Debounce Control
+        let autoAnalyzeTimer = null;
+        let isAutoAnalyzeEnabled = true;
+
+        // Chinese Common Stopwords for local NLP Fallback
+        const STOPWORDS = new Set([
+            "的", "了", "和", "是", "就", "都", "而", "及", "與", "著", "或", "一個", "沒有", "我們", "你們", "他們", 
+            "這個", "那個", "因為", "所以", "但是", "如果", "雖然", "可以", "進行", "相關", "提供", "包含", "透過", "覺得", "非常", "希望"
+        ]);
+
+        window.onload = function() {
+            initDeviceMode();
+            updateSubmissionsUI();
+            if (typeof window.initCloudSync === 'function') {
+                window.initCloudSync();
+            }
+        };
+
+        // Device Guard logic: Lock mobile devices to Audience mode
+        function isMobileDevice() {
+            return window.innerWidth < 768 || /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+        }
+
+        function initDeviceMode() {
+            if (isMobileDevice()) {
+                switchMode('audience', true);
+            } else {
+                switchMode('presenter', false);
+            }
+        }
+
+        function switchMode(mode, forced = false) {
+            if (!forced && mode === 'presenter' && isMobileDevice()) {
+                alert("講師大螢幕版面專為電腦/大螢幕設計，手機端將自動維持在「聽眾發言頁」。");
+                return;
+            }
+
+            currentMode = mode;
+            const presenterContainer = document.getElementById('view-presenter');
+            const audienceContainer = document.getElementById('view-audience');
+            const btnPresenter = document.getElementById('btn-mode-presenter');
+            const btnAudience = document.getElementById('btn-mode-audience');
+
+            if (mode === 'presenter') {
+                presenterContainer.classList.remove('hidden');
+                audienceContainer.classList.add('hidden');
+
+                btnPresenter.className = "px-3 py-1.5 rounded-lg text-xs font-bold bg-white text-indigo-700 shadow-sm transition flex items-center gap-1.5";
+                btnAudience.className = "px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 transition flex items-center gap-1.5";
+            } else {
+                presenterContainer.classList.add('hidden');
+                audienceContainer.classList.remove('hidden');
+
+                btnAudience.className = "px-3 py-1.5 rounded-lg text-xs font-bold bg-white text-indigo-700 shadow-sm transition flex items-center gap-1.5";
+                btnPresenter.className = "px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 transition flex items-center gap-1.5";
+            }
+        }
+
+        function toggleAutoAnalyze(checked) {
+            isAutoAnalyzeEnabled = checked;
+            window.isAutoAnalyzeEnabled = checked;
+        }
+
+        function toggleQRModal(show) {
+            const modal = document.getElementById('qr-modal');
+            if (show) {
+                const currentUrl = encodeURIComponent(window.location.href);
+                document.getElementById('qr-code-img').src = `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${currentUrl}`;
+                modal.classList.remove('hidden');
+            } else {
+                modal.classList.add('hidden');
+            }
+        }
+
+        // Handle Audience Form Submission
+        async function handleAudienceSubmit(e) {
+            e.preventDefault();
+            const nickname = document.getElementById('input-nickname').value.trim() || '小阿德01';
+            const opinion = document.getElementById('input-opinion').value.trim();
+
+            if (!opinion) return;
+
+            const newEntry = {
+                nickname: nickname,
+                opinion: opinion,
+                tag: '💬 聽眾意見',
+                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+                createdAt: Date.now()
+            };
+
+            // Try submitting to Firestore Cloud Database
+            let cloudSuccess = false;
+            if (typeof window.addCloudSubmission === 'function') {
+                cloudSuccess = await window.addCloudSubmission(newEntry);
+            }
+
+            // Local fallback if cloud is inactive
+            if (!cloudSuccess) {
+                const localEntry = { ...newEntry, id: Date.now() };
+                submissions.unshift(localEntry);
+                updateSubmissionsUI();
+
+                if (isAutoAnalyzeEnabled) {
+                    scheduleAutoAnalysis();
+                }
+            }
+
+            // Clear Form & Show Success Toast
+            document.getElementById('input-opinion').value = '';
+            const msg = document.getElementById('audience-success-msg');
+            msg.classList.remove('hidden');
+            setTimeout(() => msg.classList.add('hidden'), 3500);
+        }
+
+        async function clearAllSubmissions() {
+            if (typeof window.clearCloudSubmissions === 'function') {
+                await window.clearCloudSubmissions();
+            }
+            submissions = [];
+            aiConceptResults = [];
+            updateSubmissionsUI();
+            
+            d3.select("#ai-cloud-svg").selectAll("*").remove();
+            document.getElementById('cloud-empty-state').classList.remove('hidden');
+            document.getElementById('ai-summary-content').innerHTML = `<p class="text-slate-400 italic">資料已清空，等待新發言...</p>`;
+            document.getElementById('stat-last-sync').innerText = "已重置";
+        }
+
+        function updateSubmissionsUI() {
+            const listEl = document.getElementById('submissions-list');
+            const totalCountEl = document.getElementById('stat-total-count');
+            
+            totalCountEl.innerText = `目前收到 ${submissions.length} 則意見`;
+
+            if (!submissions || submissions.length === 0) {
+                listEl.innerHTML = `
+                    <div class="text-center py-12 text-slate-400 text-xs">
+                        <i class="fa-solid fa-inbox text-3xl mb-2 text-slate-300 block"></i>
+                        尚未收到意見，聽眾可掃描 QR Code 開啟頁面填寫...
+                    </div>
+                `;
+                return;
+            }
+
+            listEl.innerHTML = '';
+            submissions.forEach(item => {
+                const card = document.createElement('div');
+                card.className = "bg-slate-50 border border-slate-200 rounded-xl p-3 text-xs shadow-2xs hover:border-indigo-200 transition";
+                card.innerHTML = `
+                    <div class="flex items-center justify-between mb-1.5">
+                        <span class="font-bold text-indigo-700 flex items-center gap-1.5">
+                            <i class="fa-solid fa-user-circle text-slate-400"></i> ${escapeHtml(item.nickname)}
+                        </span>
+                        <span class="text-[10px] text-slate-400">${item.time}</span>
+                    </div>
+                    <p class="text-slate-700 leading-relaxed font-normal">${escapeHtml(item.opinion)}</p>
+                `;
+                listEl.appendChild(card);
+            });
+        }
+
+        function scheduleAutoAnalysis() {
+            if (autoAnalyzeTimer) clearTimeout(autoAnalyzeTimer);
+            autoAnalyzeTimer = setTimeout(() => {
+                triggerAIAnalysis();
+            }, 1200);
+        }
+
+        async function triggerAIAnalysis() {
+            if (!submissions || submissions.length === 0) {
+                alert('目前尚無聽眾發言可進行 AI 分析！');
+                return;
+            }
+
+            showLoading(true, "Gemini AI 正在深度閱讀發言內容，提煉重點關鍵字...");
+
+            try {
+                // Call Gemini 3 Flash Preview API
+                const apiKey = "";
+                const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+
+                const opinionsText = submissions.map((s, i) => `${i+1}. [${s.nickname}]: ${s.opinion}`).join('\n');
+                const prompt = `你是一個專業的教育與演講意見分析師。請分析以下來自「明德國小」現場聽眾的意見發言：
+
+${opinionsText}
+
+請進行重點提煉與歸納：
+1. 提取出 4 到 12 個最具代表性的「核心概念短詞」（每個詞限 2~5 個字，不要完整句子，例如「簡報架構清晰」、「案例豐富」、「建議增加互動」）。並給予 1~10 之間的相對權重數值。
+2. 提供一段 100 字以內的講評摘要說明整體意見趨勢。`;
+
+                const payload = {
+                    contents: [{ parts: [{ text: prompt }] }],
+                    generationConfig: {
+                        responseMimeType: "application/json",
+                        responseSchema: {
+                            type: "OBJECT",
+                            properties: {
+                                concepts: {
+                                    type: "ARRAY",
+                                    items: {
+                                        type: "OBJECT",
+                                        properties: {
+                                            text: { type: "STRING" },
+                                            weight: { type: "NUMBER" }
+                                        },
+                                        required: ["text", "weight"]
+                                    }
+                                },
+                                summary: { type: "STRING" }
+                            },
+                            required: ["concepts", "summary"]
+                        }
+                    }
+                };
+
+                const response = await fetch(apiUrl, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                if (!response.ok) throw new Error("Gemini API request failed");
+
+                const result = await response.json();
+                const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+
+                if (jsonText) {
+                    const parsed = JSON.parse(jsonText);
+                    renderConceptCloud(parsed.concepts);
+                    document.getElementById('ai-summary-content').innerHTML = `<p class="text-slate-700 leading-relaxed">${escapeHtml(parsed.summary)}</p>`;
+                } else {
+                    throw new Error("No output from Gemini");
+                }
+
+            } catch (err) {
+                console.warn("AI API unavailable, using local Chinese NLP segmenter fallback:", err);
+                fallbackLocalNLP();
+            } finally {
+                showLoading(false);
+                document.getElementById('stat-last-sync').innerText = `上次分析: ${new Date().toLocaleTimeString()}`;
+            }
+        }
+
+        // Local Fallback Chinese Tokenizer (Intl.Segmenter)
+        function fallbackLocalNLP() {
+            const freqMap = {};
+            const fullText = submissions.map(s => s.opinion).join(' ');
+
+            if (window.Intl && Intl.Segmenter) {
+                const segmenter = new Intl.Segmenter('zh-Hant', { granularity: 'word' });
+                for (const { segment, isWordLike } of segmenter.segment(fullText)) {
+                    const word = segment.trim();
+                    if (isWordLike && word.length >= 2 && !STOPWORDS.has(word)) {
+                        freqMap[word] = (freqMap[word] || 0) + 1;
+                    }
+                }
+            } else {
+                const matches = fullText.match(/[\u4e00-\u9fa5]{2,}/g) || [];
+                matches.forEach(w => {
+                    if (!STOPWORDS.has(w)) freqMap[w] = (freqMap[w] || 0) + 1;
+                });
+            }
+
+            const fallbackConcepts = Object.keys(freqMap).map(key => ({
+                text: key,
+                weight: freqMap[key] * 2 + 1
+            })).sort((a, b) => b.weight - a.weight).slice(0, 10);
+
+            if (fallbackConcepts.length > 0) {
+                renderConceptCloud(fallbackConcepts);
+                document.getElementById('ai-summary-content').innerHTML = `<p class="text-slate-600">（由本機 NLP 自動切詞統計：目前熱門關鍵詞包含「${fallbackConcepts.slice(0, 3).map(c => c.text).join('」、「')}」）</p>`;
+            }
+        }
+
+        function renderConceptCloud(concepts) {
+            const container = document.getElementById('ai-cloud-container');
+            const svg = d3.select("#ai-cloud-svg");
+            svg.selectAll("*").remove();
+
+            if (!concepts || concepts.length === 0) {
+                document.getElementById('cloud-empty-state').classList.remove('hidden');
+                return;
+            }
+            document.getElementById('cloud-empty-state').classList.add('hidden');
+
+            const width = container.clientWidth || 600;
+            const height = container.clientHeight || 340;
+
+            const weights = concepts.map(c => c.weight);
+            const minW = Math.min(...weights);
+            const maxW = Math.max(...weights);
+
+            const fontScale = d3.scaleLinear()
+                .domain([minW, maxW || minW + 1])
+                .range([22, 56]);
+
+            const colors = ['#4f46e5', '#2563eb', '#0d9488', '#059669', '#d97706', '#dc2626', '#7c3aed', '#db2777'];
+
+            d3.layout.cloud()
+                .size([width, height])
+                .words(concepts.map(c => ({
+                    text: c.text,
+                    size: fontScale(c.weight),
+                    weight: c.weight
+                })))
+                .padding(8)
+                .rotate(() => (Math.random() < 0.2 ? 90 : 0))
+                .font('Inter, "Noto Sans TC", sans-serif')
+                .fontSize(d => d.size)
+                .on("end", draw)
+                .start();
+
+            function draw(words) {
+                svg.attr("viewBox", `0 0 ${width} ${height}`);
+                const g = svg.append("g")
+                    .attr("transform", `translate(${width / 2},${height / 2})`);
+
+                g.selectAll("text")
+                    .data(words)
+                    .enter().append("text")
+                    .attr("class", "word-cloud-text")
+                    .style("font-size", d => `${d.size}px`)
+                    .style("font-family", 'Inter, "Noto Sans TC", sans-serif')
+                    .style("font-weight", '700')
+                    .style("fill", (d, i) => colors[i % colors.length])
+                    .attr("text-anchor", "middle")
+                    .attr("transform", d => `translate(${d.x},${d.y}) rotate(${d.rotate})`)
+                    .text(d => d.text)
+                    .append("title")
+                    .text(d => `${d.text} (相關度: ${d.weight})`);
+            }
+        }
+
+        function showLoading(show, text = "") {
+            const loader = document.getElementById('cloud-loading');
+            if (show) {
+                loader.classList.remove('hidden');
+                document.getElementById('loading-text').innerText = text;
+            } else {
+                loader.classList.add('hidden');
+            }
+        }
+
+        function escapeHtml(str) {
+            return str.replace(/[&<>"']/g, function(m) {
+                return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m];
+            });
+        }
+    </script>
+</body>
+</html>
