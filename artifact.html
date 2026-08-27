@@ -1,0 +1,712 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>明德國小意見即時收集與重點文字雲</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    colors: {
+                        brand: { 50: '#eef2ff', 500: '#6366f1', 600: '#4f46e5', 700: '#4338ca' }
+                    }
+                }
+            }
+        }
+    </script>
+    <!-- FontAwesome Icons -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap" rel="stylesheet">
+    
+    <!-- D3.js & d3-cloud Libraries -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3-cloud/1.2.5/d3.layout.cloud.min.js"></script>
+
+    <style>
+        ::-webkit-scrollbar { width: 6px; height: 6px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+        
+        .word-cloud-item {
+            cursor: pointer;
+            transition: transform 0.2s ease, opacity 0.2s ease;
+            user-select: none;
+        }
+        .word-cloud-item:hover {
+            opacity: 0.8;
+            filter: drop-shadow(0 2px 4px rgba(79, 70, 229, 0.3));
+        }
+
+        .pulse-subtle {
+            animation: pulse-border 2s infinite;
+        }
+        @keyframes pulse-border {
+            0%, 100% { border-color: rgba(99, 102, 241, 0.3); }
+            50% { border-color: rgba(99, 102, 241, 0.8); }
+        }
+    </style>
+</head>
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col font-sans antialiased selection:bg-brand-500 selection:text-white">
+
+    <!-- Navigation Header -->
+    <header class="border-b border-slate-200 bg-white/90 backdrop-blur sticky top-0 z-40 shadow-sm">
+        <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+            <div class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-500 via-purple-500 to-pink-500 flex items-center justify-center text-white shadow-md shadow-indigo-500/20">
+                    <i class="fa-solid fa-brain text-xl"></i>
+                </div>
+                <div>
+                    <h1 class="font-bold text-base sm:text-lg leading-tight text-slate-900">
+                        明德國小意見即時收集與重點文字雲
+                    </h1>
+                    <p class="text-xs text-slate-500 hidden sm:block">講師互動儀表板 · 概念歸納而非字詞切碎</p>
+                </div>
+            </div>
+
+            <!-- View Switcher Tabs -->
+            <div id="view-switcher-container" class="flex items-center gap-2 bg-slate-100 p-1 rounded-xl border border-slate-200">
+                <button id="nav-presenter-btn" onclick="switchMode('presenter')" class="px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium bg-indigo-600 text-white shadow transition">
+                    <i class="fa-solid fa-desktop mr-1.5"></i>🎤 講師大螢幕
+                </button>
+                <button id="nav-audience-btn" onclick="switchMode('audience')" class="px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium text-slate-600 hover:text-slate-900 transition">
+                    <i class="fa-solid fa-mobile-screen mr-1.5"></i>📱 聽眾發言頁
+                </button>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content Container -->
+    <main class="flex-1 max-w-7xl w-full mx-auto p-4 sm:p-6 lg:p-8 flex flex-col gap-6">
+
+        <!-- ================= Presenter View (講師儀表板) ================= -->
+        <div id="mode-presenter" class="flex flex-col gap-6 flex-1">
+            
+            <!-- Top Control & Status Bar -->
+            <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-wrap items-center justify-between gap-4">
+                <div class="flex items-center gap-4 flex-wrap">
+                    <div class="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                        <i class="fa-solid fa-users text-indigo-600"></i>
+                        <span class="text-xs text-slate-500">已收集意見:</span>
+                        <span id="stat-total-submissions" class="text-sm font-bold text-indigo-600">0</span>
+                        <span class="text-xs text-slate-400">則</span>
+                    </div>
+
+                    <div class="flex items-center gap-2 bg-slate-50 px-3 py-1.5 rounded-xl border border-slate-200">
+                        <i class="fa-solid fa-clock-rotate-left text-purple-600"></i>
+                        <span class="text-xs text-slate-500">上次 AI 分析:</span>
+                        <span id="stat-last-sync" class="text-xs font-mono text-slate-600">尚未執行</span>
+                    </div>
+
+                    <!-- Auto-Analyze Toggle Switch -->
+                    <label class="flex items-center gap-1.5 bg-indigo-50/80 px-3 py-1.5 rounded-xl border border-indigo-200 text-xs font-medium text-indigo-800 cursor-pointer select-none hover:bg-indigo-100 transition">
+                        <input type="checkbox" id="auto-analyze-toggle" checked onchange="toggleAutoAnalyze(this.checked)" class="w-3.5 h-3.5 accent-indigo-600 rounded cursor-pointer">
+                        <span><i class="fa-solid fa-bolt text-amber-500 mr-1"></i>自動即時 AI 歸納</span>
+                    </label>
+                </div>
+
+                <!-- Action Controls -->
+                <div class="flex items-center gap-2 flex-wrap">
+                    <!-- Clear Submissions -->
+                    <button onclick="clearAllSubmissions()" class="px-3 py-2 bg-slate-100 hover:bg-red-50 hover:text-red-600 text-slate-500 text-xs rounded-xl border border-slate-300 hover:border-red-200 transition" title="清空所有資料">
+                        <i class="fa-solid fa-trash-can"></i>
+                    </button>
+
+                    <!-- Run AI Analysis Trigger -->
+                    <button id="run-ai-btn" onclick="triggerAIAnalysis()" class="px-4 py-2 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white font-bold text-xs sm:text-sm rounded-xl shadow-md shadow-indigo-500/20 active:scale-95 transition flex items-center gap-2">
+                        <i class="fa-solid fa-sparkles"></i> 觸發 AI 歸納與更新文字雲
+                    </button>
+                </div>
+            </div>
+
+            <!-- Main Dashboard Grid -->
+            <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 flex-1">
+                
+                <!-- Left Column: AI Concept Word Cloud (7 cols) -->
+                <div class="lg:col-span-7 flex flex-col gap-4">
+                    <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col flex-1 min-h-[460px] relative">
+                        
+                        <!-- Word Cloud Header -->
+                        <div class="flex items-center justify-between border-b border-slate-100 pb-3 mb-3">
+                            <div class="flex items-center gap-2">
+                                <span class="text-sm font-bold text-slate-800 flex items-center gap-2">
+                                    <i class="fa-solid fa-cloud text-indigo-600"></i> AI 聽眾意見重點文字雲
+                                </span>
+                                <span class="text-[10px] bg-indigo-50 text-indigo-700 font-semibold px-2 py-0.5 rounded-full border border-indigo-200">Gemini AI 概念歸納</span>
+                            </div>
+
+                            <div class="flex items-center gap-2">
+                                <button onclick="exportCloudImage()" class="px-2.5 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs rounded-lg border border-slate-200 transition" title="下載文字雲圖片">
+                                    <i class="fa-solid fa-download mr-1 text-indigo-600"></i>匯出圖檔
+                                </button>
+                            </div>
+                        </div>
+
+                        <!-- Canvas Container -->
+                        <div id="ai-cloud-container" class="w-full flex-1 min-h-[380px] bg-slate-50/70 rounded-xl border border-slate-200 relative flex items-center justify-center overflow-hidden">
+                            
+                            <!-- Initial Empty State -->
+                            <div id="cloud-empty-state" class="flex flex-col items-center justify-center text-slate-400 gap-3 p-6 text-center">
+                                <i class="fa-solid fa-comments-dollar text-5xl text-slate-300"></i>
+                                <p class="text-xs text-slate-500">尚無聽眾回饋資料，請切換至「聽眾發言頁」填寫意見</p>
+                            </div>
+
+                            <!-- AI Processing Loading Spinner -->
+                            <div id="cloud-loading-overlay" class="hidden absolute inset-0 bg-white/80 backdrop-blur-sm flex flex-col items-center justify-center gap-3 z-30">
+                                <i class="fa-solid fa-brain fa-spin text-4xl text-indigo-600"></i>
+                                <span class="text-xs text-indigo-700 font-medium animate-pulse" id="ai-status-text">Gemini AI 正在閱讀所有聽眾留言，歸納核心重點...</span>
+                            </div>
+
+                            <!-- SVG Target -->
+                            <svg id="ai-cloud-svg" class="w-full h-full block" preserveAspectRatio="xMidYMid meet"></svg>
+
+                            <!-- Hover Tooltip -->
+                            <div id="cloud-tooltip" class="absolute hidden pointer-events-none bg-slate-900 border border-slate-700 px-3 py-1.5 rounded-lg shadow-xl text-xs text-white z-40 transform -translate-x-1/2 -translate-y-full mb-2">
+                                <div class="font-bold text-indigo-300" id="tt-concept">核心概念</div>
+                                <div class="text-slate-300 text-[11px]">歸納頻率/提及數: <span id="tt-count" class="font-bold text-white">0</span> 次</div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Right Column: AI Insights & Real-time Submissions (5 cols) -->
+                <div class="lg:col-span-5 flex flex-col gap-4">
+                    
+                    <!-- AI Executive Summary Box -->
+                    <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col gap-3">
+                        <div class="flex items-center justify-between border-b border-slate-100 pb-2">
+                            <span class="text-sm font-bold text-slate-800 flex items-center gap-2">
+                                <i class="fa-solid fa-lightbulb text-amber-500"></i> AI 聽眾意圖摘要導讀
+                            </span>
+                            <span id="ai-sentiment-badge" class="text-[11px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded-full border border-slate-200">待分析</span>
+                        </div>
+
+                        <!-- Summary Content -->
+                        <div id="ai-summary-content" class="text-xs text-slate-700 leading-relaxed space-y-2">
+                            <p class="text-slate-400 italic">點擊「觸發 AI 歸納」後，AI 將自動提煉聽眾表達的總體重點與建議趨勢...</p>
+                        </div>
+                    </div>
+
+                    <!-- Live Submissions Log Box -->
+                    <div class="bg-white border border-slate-200 rounded-2xl p-4 shadow-sm flex flex-col flex-1 min-h-[250px]">
+                        <div class="flex items-center justify-between border-b border-slate-100 pb-2 mb-3">
+                            <span class="text-sm font-bold text-slate-800 flex items-center gap-2">
+                                <i class="fa-solid fa-list-check text-indigo-600"></i> 聽眾原始發言紀錄
+                            </span>
+                            <span id="live-count-badge" class="text-xs text-slate-400 font-mono">0 則紀錄</span>
+                        </div>
+
+                        <div id="submissions-list" class="flex-1 max-h-[280px] overflow-y-auto space-y-2 pr-1">
+                            <!-- Items inserted dynamically -->
+                            <div class="text-xs text-slate-400 text-center py-8">尚無任何聽眾發言，歡迎切換至「聽眾發言頁」輸入！</div>
+                        </div>
+                    </div>
+
+                </div>
+
+            </div>
+
+        </div>
+
+        <!-- ================= Audience View (聽眾手機填寫頁) ================= -->
+        <div id="mode-audience" class="hidden flex-1 flex flex-col items-center justify-center py-6">
+            <div class="w-full max-w-md bg-white border border-slate-200 rounded-3xl p-6 sm:p-8 shadow-xl pulse-subtle flex flex-col gap-5">
+                
+                <div class="text-center border-b border-slate-100 pb-4">
+                    <div class="w-12 h-12 rounded-2xl bg-indigo-50 text-indigo-600 border border-indigo-200 flex items-center justify-center mx-auto mb-2 text-xl shadow-sm">
+                        <i class="fa-solid fa-paper-plane"></i>
+                    </div>
+                    <h2 class="text-lg font-bold text-slate-900">意見回饋</h2>
+                    <p class="text-xs text-slate-500 mt-1">請寫下您對本日課程/演講的看法、收穫或疑問</p>
+                </div>
+
+                <!-- Input Form (Simplified without satisfaction options) -->
+                <form id="audience-form" onsubmit="handleAudienceSubmit(event)" class="flex flex-col gap-4">
+                    
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">暱稱 / 稱呼（選填）</label>
+                        <input type="text" id="input-nickname" placeholder="例如: 小阿德01" 
+                            class="w-full bg-slate-50 border border-slate-300 rounded-xl px-3.5 py-2.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white transition">
+                    </div>
+
+                    <div>
+                        <label class="block text-xs font-semibold text-slate-700 mb-1.5">您的意見 <span class="text-pink-500">*</span></label>
+                        <textarea id="input-opinion" rows="5" required
+                            class="w-full bg-slate-50 border border-slate-300 rounded-xl p-3.5 text-xs text-slate-800 placeholder-slate-400 focus:outline-none focus:border-indigo-500 focus:bg-white transition resize-none"
+                            placeholder="請用一段話分享你的想法"></textarea>
+                    </div>
+
+                    <button type="submit" 
+                        class="w-full py-3.5 bg-gradient-to-r from-indigo-600 via-purple-600 to-pink-600 hover:from-indigo-500 hover:to-pink-500 text-white font-bold text-sm rounded-xl shadow-md shadow-indigo-500/20 active:scale-98 transition flex items-center justify-center gap-2 mt-1">
+                        <i class="fa-solid fa-paper-plane"></i> 送出聽眾意見
+                    </button>
+                </form>
+
+                <!-- Success Alert Toast -->
+                <div id="audience-success-msg" class="hidden bg-emerald-50 border border-emerald-200 text-emerald-800 p-3 rounded-xl text-xs text-center flex items-center justify-center gap-2 shadow-sm">
+                    <i class="fa-solid fa-circle-check text-emerald-600 text-base"></i> 發言已成功送出！講師的文字雲將自動更新。
+                </div>
+
+            </div>
+        </div>
+
+    </main>
+
+    <script>
+        // --- State Management ---
+        let submissions = [];
+        let aiConceptResults = [];
+        let currentMode = 'presenter';
+
+        // Auto-analyze Debounce and Toggle Control
+        let autoAnalyzeTimer = null;
+        let isAutoAnalyzeEnabled = true;
+
+        // BroadcastChannel for cross-tab / multi-window real-time synchronization
+        const channel = typeof BroadcastChannel !== 'undefined' ? new BroadcastChannel('audience_feedback_channel') : null;
+
+        if (channel) {
+            channel.onmessage = (event) => {
+                if (event.data && event.data.type === 'NEW_SUBMISSION') {
+                    submissions.unshift(event.data.entry);
+                    updateSubmissionsUI();
+                    showToast(`📩 收到來自 ${escapeHtml(event.data.entry.nickname)} 的新意見！`);
+                    
+                    if (isAutoAnalyzeEnabled) {
+                        scheduleAutoAnalysis();
+                    }
+                } else if (event.data && event.data.type === 'CLEAR_ALL') {
+                    resetDashboardState();
+                }
+            };
+        }
+
+        window.onload = function() {
+            initDeviceMode();
+            updateSubmissionsUI();
+        };
+
+        // Detect Mobile Device (Strict user agent or touch device)
+        function isMobileDevice() {
+            const userAgentMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+            const isTouchMobile = ('ontouchstart' in window || navigator.maxTouchPoints > 0) && window.innerWidth < 768;
+            return userAgentMobile || isTouchMobile;
+        }
+
+        // Initialize view mode based on device type
+        function initDeviceMode() {
+            const presenterBtn = document.getElementById('nav-presenter-btn');
+            if (isMobileDevice()) {
+                // Lock mobile users to Audience mode & hide presenter button
+                if (presenterBtn) presenterBtn.classList.add('hidden');
+                switchMode('audience');
+            } else {
+                // Desktop users get full options, default to presenter
+                if (presenterBtn) presenterBtn.classList.remove('hidden');
+                switchMode('presenter');
+            }
+        }
+
+        // Listen to window resize for dynamic adjustment without forcing desktop users out
+        window.addEventListener('resize', () => {
+            const presenterBtn = document.getElementById('nav-presenter-btn');
+            if (isMobileDevice()) {
+                if (presenterBtn) presenterBtn.classList.add('hidden');
+                if (currentMode === 'presenter') {
+                    switchMode('audience');
+                    showToast("📱 已切換為聽眾發言頁（講師大螢幕建議使用桌機開啟）");
+                }
+            } else {
+                if (presenterBtn) presenterBtn.classList.remove('hidden');
+            }
+        });
+
+        // Switch View Modes with Security Check
+        function switchMode(mode) {
+            // Guard: Prevent mobile users from accessing presenter mode
+            if (mode === 'presenter' && isMobileDevice()) {
+                showToast("⚠️ 講師大螢幕僅限桌機 / 大螢幕使用！");
+                return;
+            }
+
+            currentMode = mode;
+            const presenterSection = document.getElementById('mode-presenter');
+            const audienceSection = document.getElementById('mode-audience');
+            const btnPresenter = document.getElementById('nav-presenter-btn');
+            const btnAudience = document.getElementById('nav-audience-btn');
+
+            if (mode === 'presenter') {
+                presenterSection.classList.remove('hidden');
+                audienceSection.classList.add('hidden');
+                if (btnPresenter) btnPresenter.className = "px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium bg-indigo-600 text-white shadow transition";
+                if (btnAudience) btnAudience.className = "px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium text-slate-600 hover:text-slate-900 transition";
+            } else {
+                presenterSection.classList.add('hidden');
+                audienceSection.classList.remove('hidden');
+                if (btnAudience) btnAudience.className = "px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium bg-indigo-600 text-white shadow transition";
+                if (btnPresenter) btnPresenter.className = "px-3 py-1.5 rounded-lg text-xs sm:text-sm font-medium text-slate-600 hover:text-slate-900 transition";
+            }
+        }
+
+        // Auto-schedule AI Analysis with Debounce
+        function scheduleAutoAnalysis() {
+            if (!isAutoAnalyzeEnabled) return;
+            if (autoAnalyzeTimer) clearTimeout(autoAnalyzeTimer);
+
+            // Debounce for 1.2s so multiple quick submissions are analyzed in a single batch
+            autoAnalyzeTimer = setTimeout(() => {
+                triggerAIAnalysis();
+            }, 1200);
+        }
+
+        function toggleAutoAnalyze(enabled) {
+            isAutoAnalyzeEnabled = enabled;
+            if (enabled && submissions.length > 0) {
+                scheduleAutoAnalysis();
+            }
+        }
+
+        // Handle Audience Form Submission
+        function handleAudienceSubmit(e) {
+            e.preventDefault();
+            const nickname = document.getElementById('input-nickname').value.trim() || '小阿德01';
+            const opinion = document.getElementById('input-opinion').value.trim();
+
+            if (!opinion) return;
+
+            const newEntry = {
+                id: Date.now(),
+                nickname: nickname,
+                opinion: opinion,
+                tag: '💬 聽眾意見',
+                time: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+            };
+
+            submissions.unshift(newEntry);
+            updateSubmissionsUI();
+
+            // Broadcast to other open tabs/screens in real-time
+            if (channel) {
+                channel.postMessage({ type: 'NEW_SUBMISSION', entry: newEntry });
+            }
+
+            // Trigger automated AI concept analysis
+            if (isAutoAnalyzeEnabled) {
+                scheduleAutoAnalysis();
+            }
+
+            // Clear Form & Show Success Message
+            document.getElementById('input-opinion').value = '';
+            const msg = document.getElementById('audience-success-msg');
+            msg.classList.remove('hidden');
+            setTimeout(() => msg.classList.add('hidden'), 3500);
+        }
+
+        function clearAllSubmissions() {
+            resetDashboardState();
+            if (channel) {
+                channel.postMessage({ type: 'CLEAR_ALL' });
+            }
+        }
+
+        function resetDashboardState() {
+            submissions = [];
+            aiConceptResults = [];
+            updateSubmissionsUI();
+            
+            // Clear SVG
+            d3.select("#ai-cloud-svg").selectAll("*").remove();
+            document.getElementById('cloud-empty-state').classList.remove('hidden');
+            document.getElementById('ai-summary-content').innerHTML = `<p class="text-slate-400 italic">資料已清空...</p>`;
+            document.getElementById('stat-last-sync').innerText = "已重置";
+        }
+
+        function updateSubmissionsUI() {
+            document.getElementById('stat-total-submissions').innerText = submissions.length;
+            document.getElementById('live-count-badge').innerText = `${submissions.length} 則紀錄`;
+
+            const listEl = document.getElementById('submissions-list');
+            if (submissions.length === 0) {
+                listEl.innerHTML = `<div class="text-xs text-slate-400 text-center py-8">尚無任何聽眾發言，歡迎切換至「聽眾發言頁」輸入！</div>`;
+                return;
+            }
+
+            listEl.innerHTML = submissions.map(sub => `
+                <div class="bg-slate-50 p-3 rounded-xl border border-slate-200 text-xs flex flex-col gap-1 hover:border-slate-300 transition shadow-sm">
+                    <div class="flex items-center justify-between">
+                        <span class="font-bold text-indigo-700 flex items-center gap-1.5">
+                            <i class="fa-solid fa-circle-user text-slate-400"></i> ${escapeHtml(sub.nickname)}
+                        </span>
+                        <div class="flex items-center gap-2">
+                            <span class="text-[10px] text-slate-400 font-mono">${sub.time}</span>
+                            <span class="text-[10px] bg-white text-slate-500 px-1.5 py-0.5 rounded border border-slate-200">${sub.tag}</span>
+                        </div>
+                    </div>
+                    <p class="text-slate-700 leading-relaxed text-[11px] mt-0.5">${escapeHtml(sub.opinion)}</p>
+                </div>
+            `).join('');
+        }
+
+        // Gemini API Analysis Function with Exponential Backoff
+        async function triggerAIAnalysis() {
+            if (submissions.length === 0) {
+                showToast("目前尚無聽眾意見，請先收集聽眾回饋！");
+                return;
+            }
+
+            const overlay = document.getElementById('cloud-loading-overlay');
+            if (overlay) overlay.classList.remove('hidden');
+
+            const totalCount = submissions.length;
+            const targetConceptMin = Math.min(Math.max(3, Math.floor(totalCount * 1.5)), 8);
+            const targetConceptMax = Math.min(Math.max(6, totalCount * 2), 15);
+
+            const allTexts = submissions.map(s => s.opinion).join("\n- ");
+            const userPrompt = `以下是明德國小活動/課程收集到的 ${totalCount} 則聽眾真實心得意見：\n- ${allTexts}\n\n請以講師助手身份進行精準的「概念歸納」分析：\n1. 根據意見內容歸納出 ${targetConceptMin} ~ ${targetConceptMax} 個核心重點概念詞（精簡 2~5 字，請精準提煉反映聽眾真實表達的主旨，並給予 count 權重 1~10）。\n2. 撰寫一份 50~100 字的聽眾意見重點總結 (summary)。\n3. 判斷總體聽眾情緒狀態 (sentiment)。`;
+
+            const systemInstruction = `你是一位專業的講師演講與意見分析師。你的任務是閱讀零碎的聽眾留言，將同義詞、讚美與建議合併為標準化精準的「核心概念詞彙」（長度2至5字內），並輸出結構化 JSON。必須完全忠於聽眾輸入的實際內容，不可虛構未提及的課程特徵。請勿輸出無意義切碎詞（如：的、了、覺得）。`;
+
+            const payload = {
+                contents: [{ role: "user", parts: [{ text: userPrompt }] }],
+                systemInstruction: { parts: [{ text: systemInstruction }] },
+                generationConfig: {
+                    responseMimeType: "application/json",
+                    responseSchema: {
+                        type: "OBJECT",
+                        properties: {
+                            "summary": { "type": "STRING" },
+                            "sentiment": { "type": "STRING" },
+                            "concepts": {
+                                "type": "ARRAY",
+                                "items": {
+                                    "type": "OBJECT",
+                                    "properties": {
+                                        "text": { "type": "STRING" },
+                                        "count": { "type": "INTEGER" }
+                                    },
+                                    "required": ["text", "count"]
+                                }
+                            }
+                        },
+                        "required": ["summary", "sentiment", "concepts"]
+                    }
+                }
+            };
+
+            const apiKey = ""; // API key
+            const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash-preview:generateContent?key=${apiKey}`;
+
+            let apiSuccess = false;
+
+            if (apiKey) {
+                let maxRetries = 1;
+                let delay = 1000;
+
+                for (let i = 0; i <= maxRetries; i++) {
+                    try {
+                        const response = await fetch(apiUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+
+                        if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+
+                        const result = await response.json();
+                        const jsonText = result.candidates?.[0]?.content?.parts?.[0]?.text;
+                        if (jsonText) {
+                            const parsed = JSON.parse(jsonText);
+                            renderAIResults(parsed);
+                            apiSuccess = true;
+                            break;
+                        }
+                    } catch (err) {
+                        if (i < maxRetries) {
+                            await new Promise(res => setTimeout(res, delay));
+                            delay *= 2;
+                        }
+                    }
+                }
+            }
+
+            if (!apiSuccess) {
+                // Dynamic NLP Fallback: Analyzes actual text using Intl.Segmenter or Regex
+                const fallbackParsed = fallbackLocalAnalysis(submissions);
+                renderAIResults(fallbackParsed);
+            }
+
+            if (overlay) overlay.classList.add('hidden');
+            const syncEl = document.getElementById('stat-last-sync');
+            if (syncEl) syncEl.innerText = new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+        }
+
+        // Render AI Results on Canvas and Summary Cards
+        function renderAIResults(aiResult) {
+            const sentimentBadge = document.getElementById('ai-sentiment-badge');
+            if (sentimentBadge) sentimentBadge.innerText = `情緒趨勢: ${aiResult.sentiment || '正向熱烈'}`;
+            
+            const summaryContent = document.getElementById('ai-summary-content');
+            if (summaryContent) {
+                summaryContent.innerHTML = `
+                    <p class="text-slate-700 font-medium leading-relaxed">${escapeHtml(aiResult.summary)}</p>
+                `;
+            }
+
+            aiConceptResults = aiResult.concepts || [];
+            if (aiConceptResults.length === 0) return;
+
+            renderConceptCloud(aiConceptResults);
+        }
+
+        // D3 Word Cloud Renderer for Presenter
+        function renderConceptCloud(concepts) {
+            const emptyState = document.getElementById('cloud-empty-state');
+            if (emptyState) emptyState.classList.add('hidden');
+
+            const svg = d3.select("#ai-cloud-svg");
+            svg.selectAll("*").remove();
+
+            const container = document.getElementById('ai-cloud-container');
+            const width = container ? (container.clientWidth || 600) : 600;
+            const height = container ? (container.clientHeight || 380) : 380;
+
+            svg.attr("viewBox", `0 0 ${width} ${height}`);
+
+            const maxCount = d3.max(concepts, d => d.count) || 1;
+            const minCount = d3.min(concepts, d => d.count) || 1;
+
+            const fontSizeScale = d3.scaleLinear()
+                .domain([minCount, maxCount])
+                .range([18, Math.min(width, height) / 7]);
+
+            const colors = ['#4f46e5', '#0284c7', '#7c3aed', '#db2777', '#059669', '#d97706', '#2563eb'];
+
+            d3.layout.cloud()
+                .size([width, height])
+                .words(concepts.map(d => ({ text: d.text, size: fontSizeScale(d.count), count: d.count })))
+                .padding(6)
+                .rotate(() => 0)
+                .font("Noto Sans TC, sans-serif")
+                .fontSize(d => d.size)
+                .on("end", drawConceptCloud)
+                .start();
+
+            function drawConceptCloud(words) {
+                const g = svg.append("g")
+                    .attr("transform", `translate(${width / 2}, ${height / 2})`);
+
+                const tooltip = document.getElementById('cloud-tooltip');
+
+                g.selectAll("text")
+                    .data(words)
+                    .enter().append("text")
+                    .attr("class", "word-cloud-item font-bold")
+                    .style("font-size", d => `${d.size}px`)
+                    .style("font-family", "Noto Sans TC, sans-serif")
+                    .style("fill", (d, i) => colors[i % colors.length])
+                    .attr("text-anchor", "middle")
+                    .attr("transform", d => `translate(${d.x}, ${d.y}) rotate(${d.rotate})`)
+                    .text(d => d.text)
+                    .on("mouseover", function(event, d) {
+                        if (!tooltip) return;
+                        tooltip.classList.remove('hidden');
+                        document.getElementById('tt-concept').innerText = d.text;
+                        document.getElementById('tt-count').innerText = d.count;
+                        
+                        const rect = container.getBoundingClientRect();
+                        tooltip.style.left = `${event.clientX - rect.left}px`;
+                        tooltip.style.top = `${event.clientY - rect.top}px`;
+                    })
+                    .on("mouseout", function() {
+                        if (tooltip) tooltip.classList.add('hidden');
+                    });
+            }
+        }
+
+        // Real NLP Word Extraction Fallback (Uses Intl.Segmenter on actual audience input)
+        function fallbackLocalAnalysis(subs) {
+            const stopwords = new Set([
+                "的", "了", "和", "是", "就", "都", "而", "及", "與", "著", "或", "一個", "沒有", "我們", "你們", "他們",
+                "這個", "那個", "因為", "所以", "但是", "如果", "雖然", "可以", "進行", "相關", "提供", "包含", "透過",
+                "覺得", "希望", "建議", "認為", "非常", "真的", "感覺", "感謝", "謝謝", "老師", "學校", "內容", "意見"
+            ]);
+
+            const fullText = subs.map(s => s.opinion).join(" ");
+            const conceptMap = {};
+
+            if (window.Intl && Intl.Segmenter) {
+                const segmenter = new Intl.Segmenter('zh-Hant', { granularity: 'word' });
+                const segments = segmenter.segment(fullText);
+                for (const { segment, isWordLike } of segments) {
+                    const clean = segment.trim();
+                    if (isWordLike && clean.length >= 2 && !stopwords.has(clean) && !/^[0-9]+$/.test(clean)) {
+                        conceptMap[clean] = (conceptMap[clean] || 0) + 1;
+                    }
+                }
+            } else {
+                const matches = fullText.match(/[\u4e00-\u9fa5]{2,}/g) || [];
+                matches.forEach(m => {
+                    if (!stopwords.has(m)) {
+                        conceptMap[m] = (conceptMap[m] || 0) + 1;
+                    }
+                });
+            }
+
+            const sortedConcepts = Object.keys(conceptMap)
+                .map(k => ({ text: k, count: conceptMap[k] }))
+                .sort((a, b) => b.count - a.count)
+                .slice(0, 12);
+
+            const topKeywords = sortedConcepts.slice(0, 3).map(c => `「${c.text}」`).join('、');
+            const summaryText = sortedConcepts.length > 0 
+                ? `根據目前收集到的 ${subs.length} 則聽眾意見，討論焦點主要集中於 ${topKeywords} 等議題，整體呈現積極關注與具體意見交流。`
+                : `已成功收集 ${subs.length} 則聽眾反饋意見，內容豐富多元。`;
+
+            return {
+                summary: summaryText,
+                sentiment: "熱烈討論中",
+                concepts: sortedConcepts.length > 0 ? sortedConcepts : [
+                    { text: '意見交流', count: 3 },
+                    { text: '回饋積極', count: 2 }
+                ]
+            };
+        }
+
+        // Helper: Image Exporter
+        function exportCloudImage() {
+            const svgEl = document.getElementById('ai-cloud-svg');
+            if (!svgEl || svgEl.children.length === 0) {
+                showToast("尚未產生文字雲圖檔");
+                return;
+            }
+            const serializer = new XMLSerializer();
+            const svgString = serializer.serializeToString(svgEl);
+            const blob = new Blob([svgString], { type: "image/svg+xml;charset=utf-8" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `ai_concept_wordcloud_${Date.now()}.svg`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function showToast(msg) {
+            const div = document.createElement('div');
+            div.className = "fixed bottom-5 right-5 bg-slate-900 border border-slate-700 text-white px-4 py-2.5 rounded-xl shadow-2xl text-xs z-50 animate-bounce";
+            div.innerText = msg;
+            document.body.appendChild(div);
+            setTimeout(() => div.remove(), 2500);
+        }
+
+        function escapeHtml(str) {
+            return str ? str.replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' }[m])) : '';
+        }
+    </script>
+</body>
+</html>
